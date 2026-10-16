@@ -276,6 +276,9 @@ ensure_swap() {
 fetch_code() {
   step "Скачиваю сайт" "Downloading the site"
   if [ -d "$APP_DIR/.git" ]; then
+    # Адрес берём из установщика, а не из прошлой установки: так обновление
+    # подхватит переезд репозитория или форк.
+    git -C "$APP_DIR" remote set-url origin "$REPO_URL"
     git -C "$APP_DIR" fetch -q --depth 1 origin "$BRANCH"
     git -C "$APP_DIR" reset -q --hard "origin/$BRANCH"
   else

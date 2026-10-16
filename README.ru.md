@@ -87,6 +87,10 @@ curl -fsSL https://raw.githubusercontent.com/X4vi3/WWM-GuildManager/main/install
 
 `WWM_DOMAIN` — домен, `sslip` (бесплатный адрес, по умолчанию) или `none` (http). `WWM_ACTION` — `install`, `update`, `domain` или `password`.
 
+## Помощь от ИИ-ассистента
+
+В репозитории есть скилл для ИИ-ассистентов (Claude, Codex, Cursor и других): [skills/wwm-guild-manager](skills/wwm-guild-manager/SKILL.md). Дайте ассистенту доступ к серверу или к коду и попросите установить, обновить или починить сайт — скилл подскажет ему, где что лежит и что нельзя ломать.
+
 ## Разработка
 
 Нужен Node.js 20+.

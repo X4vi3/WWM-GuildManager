@@ -87,6 +87,10 @@ curl -fsSL https://raw.githubusercontent.com/X4vi3/WWM-GuildManager/main/install
 
 `WWM_DOMAIN` accepts a domain, `sslip` (free address, default) or `none` (http). `WWM_ACTION` is `install`, `update`, `domain` or `password`.
 
+## Using an AI assistant
+
+The repo ships a skill for AI assistants (Claude, Codex, Cursor and others): [skills/wwm-guild-manager](skills/wwm-guild-manager/SKILL.md). Give your assistant access to the server or the code and ask it to install, update or fix the site — the skill tells it where everything lives and what not to break.
+
 ## Development
 
 Requires Node.js 20+.
