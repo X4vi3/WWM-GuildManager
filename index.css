@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Всегда резервируем место под вертикальный скроллбар, иначе при переключении вкладок
+   (где-то есть прокрутка, где-то нет) центрованный хедер прыгает по горизонтали. */
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  /* Ровно slate-950 из палитры: фон страницы и самые глубокие поверхности — одно и то
+     же значение. Раньше здесь был отдельный #0c0d0e, не совпадавший ни с одной ступенью,
+     из-за чего карточки выглядели «наклеенными» на другой цвет. */
+  background-color: #0b0b0b;
+  color: #e7e3dd;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Единственный декоративный слой: очень слабая виньетка, чтобы длинные страницы не
+   выглядели как обрезанный прямоугольник. Цветных свечений нет — акцент должен
+   работать только там, где он что-то значит. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(ellipse 120% 90% at 50% 45%, transparent 60%, rgba(0, 0, 0, 0.5) 100%);
+}
+
+/* Заголовочная гарнитура. Имя класса историческое — сам шрифт сменился на Alice,
+   потому что у Cinzel нет кириллицы (см. tailwind.config.js). */
+.cinzel {
+  font-family: 'Alice', Georgia, serif;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+/* Счётчики и таблицы: цифры одной ширины, иначе числа «дёргаются» при обновлении. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #131211;
+}
+::-webkit-scrollbar-thumb {
+  background: #2c2926;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #423e3a;
+}
+
+/* Тонкий скроллбар для компактных списков/меню */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #423e3a;
+  border-radius: 10px;
+}
+
+/* Уважаем системную настройку «меньше движения». */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,15 @@
+# Переводы строк — всегда LF, даже на Windows.
+# Критично для shell-скриптов: с CRLF Linux откажется их запускать
+# ("bad interpreter"), а скрипты установки едут прямо на сервер.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.mjs  text eol=lf
+*.json text eol=lf
+
+# Картинки и шрифты не трогать
+*.png  binary
+*.jpg  binary
+*.webp binary
+*.woff  binary
+*.woff2 binary
