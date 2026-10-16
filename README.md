@@ -73,6 +73,7 @@ All guild data lives in one folder: `/var/lib/wwm`. To back it up, copy the fold
 
 | Problem | What to do |
 |---|---|
+| The installer stopped with an error | It prints the reason; the full log is in `/var/log/wwm-install.log` |
 | The site doesn't open | `systemctl status wwm` and `journalctl -u wwm -n 50` |
 | HTTPS doesn't work | Check that the domain's A record points to the server; Caddy keeps retrying by itself. Log: `journalctl -u caddy -n 50` |
 | "Ports 80/443 are already used" | Another web server (nginx, apache) is running. Stop it or use a separate server |

@@ -75,7 +75,7 @@ The backup contains bot tokens and the session key — treat it as a secret.
 
 ## Diagnosis
 
-Start with:
+Start with (if the installer itself failed, read `/var/log/wwm-install.log` first — it has the full output of every step):
 
 ```bash
 systemctl status wwm caddy --no-pager

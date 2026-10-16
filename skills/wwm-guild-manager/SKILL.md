@@ -24,6 +24,7 @@ delete `/var/lib/wwm` — it is the guild's entire history.
 | Service | `systemctl status wwm`, logs: `journalctl -u wwm` |
 | Web server | Caddy, config `/etc/caddy/Caddyfile`, logs: `journalctl -u caddy` |
 | Backend port | `127.0.0.1:3001` (not reachable from outside) |
+| Installer log | `/var/log/wwm-install.log` (full output of every install/update step) |
 | Officer login | `https://<site>/#admin` + password |
 | Supported OS | Ubuntu 22.04+, Debian 12, with systemd; ports 80/443 must be free |
 

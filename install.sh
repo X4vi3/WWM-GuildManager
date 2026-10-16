@@ -46,6 +46,49 @@ ok()   { printf '\033[32m✔ %s\033[0m\n' "$(m "$1" "$2")"; }
 warn() { printf '\033[33m! %s\033[0m\n' "$(m "$1" "$2")"; }
 die()  { printf '\n\033[31m✖ %s\033[0m\n' "$(m "$1" "$2")" >&2; exit 1; }
 
+# Подробный вывод apt, npm и прочих уходит сюда, на экране — только ход установки.
+LOG=/var/log/wwm-install.log
+SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+
+# try_run "рус" "eng" команда… — долгий шаг: крутилка с секундомером, пока идёт,
+# ✔ и время в конце. Код команды кладёт в RUN_RC, а сама завершается успешно:
+# вызванная внутри `if`, `&&` или `||` команда потеряла бы `set -e` и после
+# первой ошибки шла бы дальше, поэтому вызывать try_run нужно отдельной строкой.
+RUN_RC=0
+RUN_FROM=0
+try_run() {
+  local label pid start=$SECONDS i=0 rc=0
+  label=$(m "$1" "$2"); shift 2
+  RUN_FROM=$(wc -l <"$LOG")
+  printf '\n===== %s  %s\n' "$(date '+%F %T')" "$label" >>"$LOG"
+  ( "$@" ) >>"$LOG" 2>&1 &
+  pid=$!
+  if [ -t 1 ]; then
+    while kill -0 "$pid" 2>/dev/null; do
+      printf '\r  %s %s  %ds ' "${SPIN[i++ % 10]}" "$label" $((SECONDS - start))
+      sleep 0.2
+    done
+    printf '\r\033[K'
+  fi
+  wait "$pid" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    printf '  \033[32m✔\033[0m %s \033[2m(%ds)\033[0m\n' "$label" $((SECONDS - start))
+  else
+    printf '  \033[31m✖\033[0m %s \033[2m(%ds)\033[0m\n' "$label" $((SECONDS - start))
+  fi
+  RUN_RC=$rc
+}
+
+# run — то же, но провал шага останавливает установку и показывает, что пошло не так.
+run() {
+  try_run "$@"
+  [ "$RUN_RC" -eq 0 ] && return 0
+  echo
+  tail -n +"$((RUN_FROM + 1))" "$LOG" | tail -n 25 | sed 's/^/    /'
+  die "Шаг не удался, причина — в строках выше. Полный журнал: $LOG" \
+      "This step failed, see the lines above. Full log: $LOG"
+}
+
 # Вопрос читаем с терминала, а не из stdin: при `curl | bash` stdin занят самим скриптом.
 # Сам файл /dev/tty есть всегда, а открыть его можно только при живом терминале.
 has_tty() { { : >/dev/tty; } 2>/dev/null; }
@@ -146,118 +189,183 @@ explain_http_limits() {
     "     Everything else works: roster, war room, map, events, sign-ups, Telegram bot."
 }
 
-ask_domain() {
-  local ip=$1 domain="${WWM_DOMAIN:-}" choice
-  if [ -z "$domain" ] && [ -z "${WWM_ACTION:-}" ]; then
-    echo
-    m "Как будет открываться сайт?" "How will the site be reached?"
-    if [ -n "$ip" ]; then
-      m "  1) Бесплатный адрес $(sslip_name "$ip") — HTTPS, всё работает сразу" \
-        "  1) Free address $(sslip_name "$ip") — HTTPS, everything works right away"
-      m "     минус: адрес привязан к IP сервера; при переезде он сменится, и Discord придётся настроить заново" \
-        "     downside: the address is tied to the server IP; if you move servers it changes and Discord must be set up again"
-    fi
-    m "  2) Свой домен, например guild.example.com — заранее создайте у регистратора A-запись → ${ip:-IP сервера}" \
-      "  2) Your own domain, e.g. guild.example.com — first create an A record at your registrar → ${ip:-server IP}"
-    m "  3) Без домена и HTTPS: http://${ip:-IP-сервера}" \
-      "  3) No domain, no HTTPS: http://${ip:-server-IP}"
-    explain_http_limits
-    if [ -n "$ip" ]; then
-      ask choice "Выбор [1]:" "Choice [1]:"
-      choice=${choice:-1}
-    else
-      ask choice "Выбор [2]:" "Choice [2]:"
-      choice=${choice:-2}
-    fi
-    case "$choice" in
-      1) [ -n "$ip" ] || die "Не удалось узнать IP сервера — выберите 2 или 3." "Could not detect the server IP — choose 2 or 3."
-         domain=$(sslip_name "$ip") ;;
-      2) ask domain "Домен:" "Domain:"
-         [ -n "$domain" ] || die "Домен не введён." "No domain entered." ;;
-      3) domain=none ;;
-      *) die "Нужно ввести 1, 2 или 3." "Please enter 1, 2 or 3." ;;
-    esac
-  fi
-  # Без вопросов: пусто или sslip — бесплатный адрес, none — без домена
-  case "$domain" in
-    ''|sslip)
-      if [ -n "$ip" ]; then domain=$(sslip_name "$ip"); else domain=none; fi ;;
-  esac
-  if [ "$domain" = none ]; then
-    DOMAIN=''
-    return
-  fi
-  domain=$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]' | sed -E 's#^https?://##; s#/.*$##; s/[[:space:]]//g')
-  if [ -n "$domain" ] && ! printf '%s' "$domain" | grep -Eq '^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$'; then
-    die "«$domain» не похож на домен. Пример: guild.example.com" "\"$domain\" does not look like a domain. Example: guild.example.com"
-  fi
-  if [ -n "$domain" ] && [ -n "$ip" ]; then
-    local resolved
-    resolved=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')
-    if ! printf ' %s ' "$resolved" | grep -q " $ip "; then
-      warn "Домен $domain сейчас указывает на: ${resolved:-никуда}, а этот сервер — $ip." \
-           "Domain $domain currently points to: ${resolved:-nothing}, but this server is $ip."
-      warn "HTTPS заработает сам, как только A-запись обновится (обычно 5–30 минут)." \
-           "HTTPS will start working by itself once the A record updates (usually 5–30 minutes)."
-      if [ -z "${WWM_DOMAIN:-}" ]; then
-        confirm "Продолжить с этим доменом?" "Continue with this domain?" || die "Остановлено." "Stopped."
-      fi
-    fi
-  fi
-  DOMAIN=$domain
+normalize_domain() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's#^https?://##; s#/.*$##; s/[[:space:]]//g'
 }
 
+valid_domain() {
+  printf '%s' "$1" | grep -Eq '^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$'
+}
+
+# Указывает ли домен на этот сервер. Если нет — предупреждает и возвращает 1.
+domain_points_here() {
+  local domain=$1 ip=$2 resolved
+  [ -n "$ip" ] || return 0
+  resolved=$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u | tr '\n' ' ')
+  printf ' %s ' "$resolved" | grep -q " $ip " && return 0
+  warn "Домен $domain сейчас указывает на: ${resolved:-никуда}, а этот сервер — $ip." \
+       "Domain $domain currently points to: ${resolved:-nothing}, but this server is $ip."
+  warn "HTTPS заработает сам, как только A-запись обновится (обычно 5–30 минут)." \
+       "HTTPS will start working by itself once the A record updates (usually 5–30 minutes)."
+  return 1
+}
+
+ask_domain() {
+  local ip=$1 domain="${WWM_DOMAIN:-}" choice def raw
+
+  # Без вопросов: пусто или sslip — бесплатный адрес, none — без домена
+  if [ -n "$domain" ] || [ -n "${WWM_ACTION:-}" ] || ! has_tty; then
+    case "$domain" in
+      ''|sslip) if [ -n "$ip" ]; then domain=$(sslip_name "$ip"); else domain=none; fi ;;
+    esac
+    if [ "$domain" = none ]; then DOMAIN=''; return; fi
+    domain=$(normalize_domain "$domain")
+    valid_domain "$domain" || die "«$domain» не похож на домен. Пример: guild.example.com" \
+                                  "\"$domain\" does not look like a domain. Example: guild.example.com"
+    domain_points_here "$domain" "$ip" || true
+    DOMAIN=$domain
+    return
+  fi
+
+  echo
+  m "Как будет открываться сайт?" "How will the site be reached?"
+  if [ -n "$ip" ]; then
+    m "  1) Бесплатный адрес $(sslip_name "$ip") — HTTPS, всё работает сразу" \
+      "  1) Free address $(sslip_name "$ip") — HTTPS, everything works right away"
+    m "     минус: адрес привязан к IP сервера; при переезде он сменится, и Discord придётся настроить заново" \
+      "     downside: the address is tied to the server IP; if you move servers it changes and Discord must be set up again"
+  fi
+  m "  2) Свой домен, например guild.example.com — заранее создайте у регистратора A-запись → ${ip:-IP сервера}" \
+    "  2) Your own domain, e.g. guild.example.com — first create an A record at your registrar → ${ip:-server IP}"
+  m "  3) Без домена и HTTPS: http://${ip:-IP-сервера}" \
+    "  3) No domain, no HTTPS: http://${ip:-server-IP}"
+  explain_http_limits
+  if [ -n "$ip" ]; then def=1; else def=2; fi
+
+  while true; do
+    ask choice "Выбор [$def]:" "Choice [$def]:"
+    case "${choice:-$def}" in
+      1)
+        if [ -z "$ip" ]; then
+          warn "Не удалось узнать IP сервера — выберите 2 или 3." "Could not detect the server IP — choose 2 or 3."
+          continue
+        fi
+        DOMAIN=$(sslip_name "$ip"); return ;;
+      2)
+        while true; do
+          ask raw "Домен (например guild.example.com):" "Domain (e.g. guild.example.com):"
+          domain=$(normalize_domain "$raw")
+          if [ -z "$domain" ]; then
+            warn "Домен не введён." "No domain entered."
+          elif ! valid_domain "$domain"; then
+            warn "«$raw» не похож на домен. Пример: guild.example.com" \
+                 "\"$raw\" does not look like a domain. Example: guild.example.com"
+          else
+            break
+          fi
+        done
+        if domain_points_here "$domain" "$ip" \
+           || confirm "Всё равно продолжить с этим доменом?" "Continue with this domain anyway?"; then
+          DOMAIN=$domain; return
+        fi
+        m "Хорошо, выберите вариант ещё раз." "OK, choose again." ;;
+      3) DOMAIN=''; return ;;
+      *) warn "Введите 1, 2 или 3." "Please enter 1, 2 or 3." ;;
+    esac
+  done
+}
+
+# Пароль попадает в файл настроек systemd; кавычки, пробелы и $ там ломают разбор.
+# Печатает, что не так с паролем, или ничего, если он годится.
+password_problem() {
+  if [ ${#1} -lt 6 ]; then
+    m "Пароль короче 6 символов." "The password is shorter than 6 characters."
+  elif ! printf '%s' "$1" | grep -Eq '^[A-Za-z0-9._@#%+=:,!?-]+$'; then
+    m "В пароле можно только латиницу, цифры и знаки . _ @ # % + = : , ! ? -" \
+      "Only Latin letters, digits and . _ @ # % + = : , ! ? - are allowed."
+  fi
+}
+
+random_password() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16 || true; }
+
 ask_password() {
-  local pw="${WWM_PASSWORD:-}" pw2
-  if [ -z "$pw" ] && [ -z "${WWM_ACTION:-}" ]; then
-    echo
-    m "Пароль офицеров — им входят в режим редактирования." \
-      "Officer password — used to unlock editing."
+  local pw="${WWM_PASSWORD:-}" pw2 problem
+
+  if [ -n "$pw" ] || [ -n "${WWM_ACTION:-}" ] || ! has_tty; then
+    if [ -z "$pw" ]; then pw=$(random_password); GENERATED_PW=1; fi
+    problem=$(password_problem "$pw")
+    [ -z "$problem" ] || { printf '\n\033[31m✖ %s\033[0m\n' "$problem" >&2; exit 1; }
+    PASSWORD=$pw
+    return
+  fi
+
+  echo
+  m "Пароль офицеров — им входят в режим редактирования." \
+    "Officer password — used to unlock editing."
+  m "Не короче 6 символов: латиница, цифры и знаки . _ @ # % + = : , ! ? -" \
+    "At least 6 characters: Latin letters, digits and . _ @ # % + = : , ! ? -"
+  while true; do
     ask_secret pw "Пароль (Enter — придумать случайный):" "Password (Enter — generate a random one):"
-    if [ -n "$pw" ]; then
-      ask_secret pw2 "Повторите пароль:" "Repeat the password:"
-      [ "$pw" = "$pw2" ] || die "Пароли не совпали." "Passwords do not match."
+    if [ -z "$pw" ]; then
+      PASSWORD=$(random_password); GENERATED_PW=1
+      return
     fi
-  fi
-  if [ -z "$pw" ]; then
-    pw=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16 || true)
-    GENERATED_PW=1
-  fi
-  [ ${#pw} -ge 6 ] || die "Пароль короче 6 символов." "Password is shorter than 6 characters."
-  # Пароль попадает в файл настроек systemd; кавычки, пробелы и $ там ломают разбор.
-  printf '%s' "$pw" | grep -Eq '^[A-Za-z0-9._@#%+=:,!?-]+$' \
-    || die "В пароле можно латиницу, цифры и знаки . _ @ # % + = : , ! ? -" \
-           "The password may contain Latin letters, digits and . _ @ # % + = : , ! ? -"
-  PASSWORD=$pw
+    problem=$(password_problem "$pw")
+    if [ -n "$problem" ]; then
+      printf '\033[33m! %s %s\033[0m\n' "$problem" "$(m "Попробуйте ещё раз." "Try again.")"
+      continue
+    fi
+    ask_secret pw2 "Повторите пароль:" "Repeat the password:"
+    if [ "$pw" != "$pw2" ]; then
+      warn "Пароли не совпали. Попробуйте ещё раз." "Passwords do not match. Try again."
+      continue
+    fi
+    PASSWORD=$pw
+    return
+  done
 }
 
 # ---------- установка частей ----------
 
+add_node_repo() { curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash -; }
+
+add_caddy_repo() {
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+    | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' >/etc/apt/sources.list.d/caddy-stable.list
+  apt-get update
+}
+
 install_packages() {
-  step "Ставлю системные пакеты" "Installing system packages"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq curl ca-certificates gnupg git debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+  run "Обновляю список пакетов" "Updating package lists" apt-get update
+  run "Ставлю git, curl и сертификаты" "Installing git, curl and certificates" \
+    apt-get install -y curl ca-certificates gnupg git debian-keyring debian-archive-keyring apt-transport-https
 
   local have=0
   if command -v node >/dev/null; then
     have=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
   fi
   if [ "$have" -lt 20 ]; then
-    step "Ставлю Node.js $NODE_MAJOR" "Installing Node.js $NODE_MAJOR"
-    curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - >/dev/null
-    apt-get install -y -qq nodejs >/dev/null
+    run "Подключаю репозиторий Node.js" "Adding the Node.js repository" add_node_repo
+    run "Ставлю Node.js $NODE_MAJOR" "Installing Node.js $NODE_MAJOR" apt-get install -y nodejs
   fi
-  ok "Node.js $(node -v)" "Node.js $(node -v)"
 
   if ! command -v caddy >/dev/null; then
-    step "Ставлю Caddy (веб-сервер с автоматическим HTTPS)" "Installing Caddy (web server with automatic HTTPS)"
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' >/etc/apt/sources.list.d/caddy-stable.list
-    apt-get update -qq
-    apt-get install -y -qq caddy >/dev/null
+    run "Подключаю репозиторий Caddy" "Adding the Caddy repository" add_caddy_repo
+    run "Ставлю Caddy — веб-сервер с автоматическим HTTPS" "Installing Caddy — web server with automatic HTTPS" \
+      apt-get install -y caddy
   fi
-  ok "Caddy $(caddy version | awk '{print $1}')" "Caddy $(caddy version | awk '{print $1}')"
+  m "  Node.js $(node -v), Caddy $(caddy version | awk '{print $1}')" \
+    "  Node.js $(node -v), Caddy $(caddy version | awk '{print $1}')"
+}
+
+make_swap() {
+  fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
 }
 
 # Сборка фронта на машине с 1 ГБ памяти может упасть без подкачки.
@@ -265,45 +373,51 @@ ensure_swap() {
   local mem_mb
   mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
   if [ "$mem_mb" -lt 1800 ] && [ -z "$(swapon --show --noheadings 2>/dev/null)" ] && [ ! -e /swapfile ]; then
-    step "Мало памяти ($mem_mb МБ) — добавляю файл подкачки 1 ГБ" "Low memory ($mem_mb MB) — adding a 1 GB swap file"
-    if fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none; then
-      chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
-      grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
-    fi
+    # Не вышло — не беда: сборка, скорее всего, пройдёт и так
+    try_run "Мало памяти ($mem_mb МБ) — добавляю файл подкачки 1 ГБ" \
+            "Low memory ($mem_mb MB) — adding a 1 GB swap file" make_swap
   fi
 }
 
-fetch_code() {
-  step "Скачиваю сайт" "Downloading the site"
+download_code() {
   if [ -d "$APP_DIR/.git" ]; then
     # Адрес берём из установщика, а не из прошлой установки: так обновление
     # подхватит переезд репозитория или форк.
     git -C "$APP_DIR" remote set-url origin "$REPO_URL"
-    git -C "$APP_DIR" fetch -q --depth 1 origin "$BRANCH"
-    git -C "$APP_DIR" reset -q --hard "origin/$BRANCH"
+    git -C "$APP_DIR" fetch --depth 1 origin "$BRANCH"
+    git -C "$APP_DIR" reset --hard "origin/$BRANCH"
   else
     if [ -d "$APP_DIR" ]; then
       # Старая ручная установка без git: код в сторону, данные заберёт migrate_data
       mv "$APP_DIR" "$APP_DIR.old-$(date +%Y%m%d%H%M%S)"
     fi
-    git clone -q --depth 1 --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+    git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
   fi
-  ok "Версия $(git -C "$APP_DIR" log -1 --format='%h от %cs')" "Version $(git -C "$APP_DIR" log -1 --format='%h from %cs')"
 }
+
+fetch_code() {
+  run "Скачиваю сайт" "Downloading the site" download_code
+  m "  Версия $(git -C "$APP_DIR" log -1 --format='%h от %cs')" \
+    "  Version $(git -C "$APP_DIR" log -1 --format='%h from %cs')"
+}
+
+install_deps() { cd "$APP_DIR" && npm ci --no-audit --no-fund --no-progress; }
 
 # Сборка идёт в соседнюю папку, а потом подменяет старую одним переименованием —
 # так при обновлении сайт ни секунды не стоит без файлов.
-build_site() {
-  step "Собираю сайт (1–3 минуты)" "Building the site (1–3 minutes)"
+build_frontend() {
   cd "$APP_DIR"
-  npm ci --no-audit --no-fund --loglevel=error >/dev/null
   rm -rf dist.new
-  node node_modules/vite/bin/vite.js build --outDir dist.new --emptyOutDir --logLevel error
+  node node_modules/vite/bin/vite.js build --outDir dist.new --emptyOutDir
   rm -rf dist.old
   if [ -d dist ]; then mv dist dist.old; fi
   mv dist.new dist
   rm -rf dist.old
-  ok "Сайт собран" "Site built"
+}
+
+build_site() {
+  run "Ставлю зависимости сайта" "Installing the site's dependencies" install_deps
+  run "Собираю сайт" "Building the site" build_frontend
 }
 
 ensure_user_and_dirs() {
@@ -403,34 +517,39 @@ open_firewall() {
   fi
 }
 
-start_and_check() {
-  step "Запускаю" "Starting"
+# Ждёт, пока сайт начнёт отвечать; не дождался — кладёт в журнал установки
+# последние строки журнала службы, чтобы run показал причину.
+wait_backend() {
   systemctl restart $SERVICE
   local i
   for i in $(seq 1 30); do
-    if curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/session" >/dev/null 2>&1; then
-      ok "Сайт работает" "The site is running"
-      return 0
-    fi
+    curl -fsS --max-time 2 "http://127.0.0.1:$PORT/api/session" >/dev/null 2>&1 && return 0
     sleep 1
   done
-  journalctl -u $SERVICE -n 30 --no-pager || true
-  die "Сайт не запустился. Журнал выше; полностью: journalctl -u $SERVICE" \
-      "The site did not start. Log above; full log: journalctl -u $SERVICE"
+  journalctl -u $SERVICE -n 30 --no-pager
+  return 1
+}
+
+start_and_check() {
+  run "Запускаю сайт" "Starting the site" wait_backend
+}
+
+wait_https() {
+  local i
+  for i in $(seq 1 20); do
+    curl -fsS --max-time 4 "https://$DOMAIN/api/session" >/dev/null && return 0
+    sleep 3
+  done
+  journalctl -u caddy -n 20 --no-pager
+  return 1
 }
 
 # Caddy выпускает сертификат в фоне. Ждём немного, чтобы выдать проверенную ссылку,
 # но не держим человека: если DNS ещё не обновился, HTTPS включится сам позже.
 check_https() {
   [ -n "$DOMAIN" ] || return 0
-  local i
-  for i in $(seq 1 20); do
-    if curl -fsS --max-time 4 "https://$DOMAIN/api/session" >/dev/null 2>&1; then
-      ok "HTTPS работает" "HTTPS is working"
-      return 0
-    fi
-    sleep 3
-  done
+  try_run "Получаю HTTPS-сертификат для $DOMAIN" "Getting an HTTPS certificate for $DOMAIN" wait_https
+  [ "$RUN_RC" -eq 0 ] && return 0
   warn "HTTPS пока не отвечает. Обычно это значит, что A-запись домена ещё не обновилась." \
        "HTTPS is not answering yet. Usually the domain's A record has not updated yet."
   warn "Caddy продолжит попытки сам. Проверить: journalctl -u caddy -n 50" \
@@ -486,11 +605,19 @@ summary() {
 
 # ---------- сценарии ----------
 
+# Перед долгими шагами: одна строка о том, где искать подробности.
+begin_work() {
+  : >>"$LOG"
+  echo
+  m "Подробный журнал всех шагов: $LOG" "Detailed log of every step: $LOG"
+}
+
 do_install() {
   SERVER_IP=$(public_ip)
   check_ports
   ask_domain "$SERVER_IP"
   ask_password
+  begin_work
   install_packages
   ensure_swap
   ensure_user_and_dirs
@@ -510,6 +637,7 @@ do_install() {
 do_update() {
   SERVER_IP=$(public_ip)
   load_env
+  begin_work
   install_packages
   ensure_swap
   ensure_user_and_dirs
@@ -563,13 +691,16 @@ main() {
       m "  3) Сбросить пароль офицеров" "  3) Reset the officer password"
       m "  4) Выйти" "  4) Exit"
       local choice
-      ask choice "Номер [1]:" "Number [1]:"
-      case "${choice:-1}" in
-        1) action=update ;;
-        2) action=domain ;;
-        3) action=password ;;
-        *) exit 0 ;;
-      esac
+      while [ -z "$action" ]; do
+        ask choice "Номер [1]:" "Number [1]:"
+        case "${choice:-1}" in
+          1) action=update ;;
+          2) action=domain ;;
+          3) action=password ;;
+          4) exit 0 ;;
+          *) warn "Введите число от 1 до 4." "Please enter a number from 1 to 4." ;;
+        esac
+      done
     else
       action=install
     fi

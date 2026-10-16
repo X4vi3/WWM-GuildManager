@@ -73,6 +73,7 @@ curl -fsSL https://raw.githubusercontent.com/X4vi3/WWM-GuildManager/main/install
 
 | Проблема | Что делать |
 |---|---|
+| Установщик остановился с ошибкой | Он показывает причину; полный журнал — в `/var/log/wwm-install.log` |
 | Сайт не открывается | `systemctl status wwm` и `journalctl -u wwm -n 50` |
 | Не работает HTTPS | Проверьте, что A-запись домена указывает на сервер; Caddy сам продолжает попытки. Журнал: `journalctl -u caddy -n 50` |
 | «Порты 80/443 уже заняты» | На сервере работает другой веб-сервер (nginx, apache). Остановите его или используйте отдельный сервер |
