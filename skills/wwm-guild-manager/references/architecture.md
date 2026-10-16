@@ -10,6 +10,7 @@ npm install
 EDIT_PASSWORD=dev node server/index.mjs   # API + static on :3001, data in server/data/
 npm run dev                                # Vite on :3000, proxies /api to :3001
 npm test                                   # node --test tests/*.test.mjs, no network needed
+npx tsc --noEmit                           # type check (server .mjs files are not covered)
 npm run build                              # must pass before shipping
 ```
 
@@ -117,7 +118,8 @@ strategy name) is stored in Russian, so display code may need to translate it.
 
 ## Shipping a change
 
-1. `npm test` and `npm run build` pass.
+1. `npm test`, `npx tsc --noEmit` and `npm run build` pass; for UI changes, also look at
+   the result in a browser — server tests can't catch a client that never sends a request.
 2. Commit to `main` and push.
 3. Servers get it when their owner re-runs the installer and picks "update"
    (or `WWM_ACTION=update`). There is no auto-update.

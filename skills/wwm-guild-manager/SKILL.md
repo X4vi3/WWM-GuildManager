@@ -32,8 +32,14 @@ delete `/var/lib/wwm` — it is the guild's entire history.
 
 - **Installing, updating, moving, backups, anything broken on a server** →
   [references/operations.md](references/operations.md)
-- **Changing the code, adding features, understanding the data model** →
-  [references/architecture.md](references/architecture.md)
+- **Changing the code** — start with
+  [references/architecture.md](references/architecture.md) (code map, data files, rules
+  that are easy to break), then as needed:
+  - [references/features.md](references/features.md) — every feature: how it works, why,
+    and what was tried and rejected. Read the section before touching that feature.
+  - [references/design.md](references/design.md) — the closed design system, layout rules
+    and the maintainer's preferences. Read before any UI work.
+  - [references/api.md](references/api.md) — every HTTP route and who may call it.
 - **Connecting the Discord bot** (step-by-step for the officer, in Russian) →
   [../../docs/discord-setup.ru.md](../../docs/discord-setup.ru.md)
 
@@ -51,5 +57,5 @@ delete `/var/lib/wwm` — it is the guild's entire history.
    to the user or anywhere else.
 4. **HTTPS is required** for the Discord bot's buttons, Discord login and YouTube uploads.
    Without a domain the installer can use a free `<ip-with-dashes>.sslip.io` address.
-5. **After changing code**, run `npm test` and `npm run build` before shipping; users get
+5. **After changing code**, run `npm test`, `npx tsc --noEmit` and `npm run build` before shipping; users get
    changes by re-running the installer (option 1), which pulls `main`.
