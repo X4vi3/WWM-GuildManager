@@ -298,7 +298,7 @@ build_site() {
   cd "$APP_DIR"
   npm ci --no-audit --no-fund --loglevel=error >/dev/null
   rm -rf dist.new
-  npx --no-install vite build --outDir dist.new --emptyOutDir --logLevel error
+  node node_modules/vite/bin/vite.js build --outDir dist.new --emptyOutDir --logLevel error
   rm -rf dist.old
   if [ -d dist ]; then mv dist dist.old; fi
   mv dist.new dist
